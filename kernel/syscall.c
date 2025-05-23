@@ -6,6 +6,7 @@
 #include "proc.h"
 #include "syscall.h"
 #include "defs.h"
+#include "user/trace.h"
 
 // Fetch the uint64 at addr from the current process.
 int
@@ -79,6 +80,15 @@ argstr(int n, char *buf, int max)
   return fetchstr(addr, buf, max);
 }
 
+// Procedure for trace system call, this runs in kernel
+uint64 sys_trace() {
+	int n;
+	argint(0, &n);
+	struct proc *curproc = myproc();
+	curproc->traced = (n & T_TRACE) ? n : 0;
+	return 0;
+}
+
 // Prototypes for the functions that handle system calls.
 extern uint64 sys_fork(void);
 extern uint64 sys_exit(void);
@@ -101,6 +111,32 @@ extern uint64 sys_unlink(void);
 extern uint64 sys_link(void);
 extern uint64 sys_mkdir(void);
 extern uint64 sys_close(void);
+
+// System call names for tracing
+static char *syscall_names[] = {
+[SYS_fork]    "fork",
+[SYS_exit]    "exit",
+[SYS_wait]    "wait",
+[SYS_pipe]    "pipe",
+[SYS_read]    "read",
+[SYS_kill]    "kill",
+[SYS_exec]    "exec",
+[SYS_fstat]   "fstat",
+[SYS_chdir]   "chdir",
+[SYS_dup]     "dup",
+[SYS_getpid]  "getpid",
+[SYS_sbrk]    "sbrk",
+[SYS_sleep]   "sleep",
+[SYS_uptime]  "uptime",
+[SYS_open]    "open",
+[SYS_write]   "write",
+[SYS_mknod]   "mknod",
+[SYS_unlink]  "unlink",
+[SYS_link]    "link",
+[SYS_mkdir]   "mkdir",
+[SYS_close]   "close",
+[SYS_trace]   "trace",
+};
 
 // An array mapping syscall numbers from syscall.h
 // to the function that handles the system call.
@@ -126,6 +162,7 @@ static uint64 (*syscalls[])(void) = {
 [SYS_link]    sys_link,
 [SYS_mkdir]   sys_mkdir,
 [SYS_close]   sys_close,
+[SYS_trace]   sys_trace,
 };
 
 void
@@ -133,12 +170,37 @@ syscall(void)
 {
   int num;
   struct proc *p = myproc();
+  char procname[16];
+  int i;
+
+  // Copy process name
+  for(i = 0; p->name[i] != 0 && i < sizeof(procname)-1; i++) {
+    procname[i] = p->name[i];
+  }
+  procname[i] = '\0';
 
   num = p->trapframe->a7;
+  int is_traced = (p->traced & T_TRACE);
+
+  // Handle exit() specially since we won't return
+  if(num == SYS_exit && is_traced) {
+    printf("TRACE: pid = %d | process name = %s | syscall = %s\n",
+        p->pid, procname, syscall_names[num]);
+  }
+
   if(num > 0 && num < NELEM(syscalls) && syscalls[num]) {
-    // Use num to lookup the system call function for num, call it,
-    // and store its return value in p->trapframe->a0
     p->trapframe->a0 = syscalls[num]();
+    
+    if (is_traced) {
+      // Special case for exec() that returns 0 on success
+      if (num == SYS_exec && p->trapframe->a0 == 0) {
+        printf("TRACE: pid = %d | process name = %s | syscall = %s\n",
+            p->pid, procname, syscall_names[num]);
+      } else {
+        printf("TRACE: pid = %d | process name = %s | syscall = %s | return val = %ld\n",
+            p->pid, procname, syscall_names[num], p->trapframe->a0);
+      }
+    }
   } else {
     printf("%d %s: unknown sys call %d\n",
             p->pid, p->name, num);
