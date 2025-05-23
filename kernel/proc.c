@@ -5,6 +5,8 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "user/trace.h"
+
 
 struct cpu cpus[NCPU];
 
@@ -124,6 +126,7 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+  p->traced = T_UNTRACE; //initialize tracing 
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -169,6 +172,7 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+  p->traced = T_UNTRACE;
 }
 
 // Create a user page table for a given process, with no user memory,
@@ -273,6 +277,53 @@ growproc(int n)
   p->sz = sz;
   return 0;
 }
+
+// Enable tracing for a process
+int trace(int pid, int enable) {
+  struct proc *p;
+
+  acquire(&wait_lock);
+  for(p = proc; p < &proc[NPROC]; p++) {
+    if(p->pid == pid) {
+      acquire(&p->lock);
+      if(enable) {
+        p->traced |= T_TRACE;
+      } else {
+        p->traced &= ~T_TRACE;
+      }
+      release(&p->lock);
+      release(&wait_lock);
+      return 0;
+    }
+  }
+  release(&wait_lock);
+  return -1;
+}
+
+
+
+// Enable tracing for child processes
+int traceonfork(int pid, int enable) {
+  struct proc *p;
+
+  acquire(&wait_lock);
+  for(p = proc; p < &proc[NPROC]; p++) {
+    if(p->pid == pid) {
+      acquire(&p->lock);
+      if(enable) {
+        p->traced |= T_ONFORK;
+      } else {
+        p->traced &= ~T_ONFORK;
+      }
+      release(&p->lock);
+      release(&wait_lock);
+      return 0;
+    }
+  }
+  release(&wait_lock);
+  return -1;
+}
+
 
 // Create a new process, copying the parent.
 // Sets up child kernel stack to return as if from fork() system call.
